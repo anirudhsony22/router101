@@ -31,6 +31,8 @@
  *
  *---------------------------------------------------------------------*/
 uint16_t get_checksum(uint16_t *buf, int count);
+uint16_t get_checksum2(uint16_t *buf, int count);
+void print_bits(uint16_t num);
 void sr_init(struct sr_instance* sr)
 {
     /* REQUIRES */
@@ -105,14 +107,20 @@ void sr_handlepacket(struct sr_instance* sr,
     } else if (ntohs(eth_hdr->ether_type) == ETHERTYPE_IP) {
         printf(" --------- got IP\n");
         
-        int is_correct_checksum = validate_checksum(packet);
+        int is_correct_checksum = validate_ipchecksum(packet);
         
         if (is_correct_checksum) {
             printf("checksum is correct\n");
         } else {
             printf("checksum is wrong\n");
         }
-        
+        struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+        ip_hdr->ip_ttl--;
+        if(ip_hdr->ip_ttl==0){
+            //Handle ICMP here
+            printf("TTL 0 - droppping the packet"); 
+            return;
+            }
     } else if (ntohs(eth_hdr->ether_type) == IPPROTO_ICMP) {
         printf(" ---------- got ICMP\n");
     }
@@ -173,18 +181,15 @@ void process_buffered_packets(struct sr_instance* sr, uint32_t ip) {
     /* Send out all buffered packets that were waiting for this ARP reply */
 }
 
-int validate_checksum(uint8_t *packet) {
+int validate_ipchecksum(uint8_t *packet) {
     struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
 
-    uint16_t ip_sum = ip_hdr->ip_sum;
+    uint16_t temp_sum = ip_hdr->ip_sum;
     ip_hdr->ip_sum = 0;
     int header_len = ip_hdr->ip_hl * 4;
-    uint16_t cksum = get_checksum((uint16_t *)&ip_hdr, header_len / 2);
-
-    // uint16_t cksum = get_checksum((uint16_t *)ip_hdr, sizeof(struct ip) / 2);
-    ip_hdr->ip_sum = ip_sum;
-
-    return (cksum == ip_sum);
+    uint16_t cksum = get_checksum((uint16_t *)ip_hdr, header_len/2);
+    ip_hdr->ip_sum = temp_sum;
+    return (cksum == temp_sum);
 }
 
 uint16_t get_checksum(uint16_t *buf, int count) {
@@ -197,6 +202,15 @@ uint16_t get_checksum(uint16_t *buf, int count) {
             sum++;
         }
     }
-
-    return htons((~sum) & 0xFFFF);
+    sum = ~sum;
+    return sum?sum:0xffff;
 }
+
+void print_bits(uint16_t num) {
+    printf("%u ====> ", num);
+    for (int i = 15; i >= 0; i--) {
+        printf("%d", (num >> i) & 1);
+    }
+    printf("\n");
+}
+

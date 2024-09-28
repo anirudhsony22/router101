@@ -33,6 +33,7 @@
 #include "sr_dumper.h"
 #include "sr_router.h"
 #include "sr_rt.h"
+#include "cache.c"
 
 extern char* optarg;
 
@@ -240,6 +241,13 @@ static void sr_destroy_instance(struct sr_instance* sr)
  *
  *
  *----------------------------------------------------------------------------*/
+void initialize_cache(struct cache* mycache) {
+    mycache->arpcacheheader = malloc(sizeof(struct arpcache));
+    mycache->arpcacheheader->next = NULL;  // Set next pointer to NULL
+
+    mycache->ipheader = malloc(sizeof(struct ipcache));
+    mycache->ipheader->next = NULL;  // Set next pointer to NULL
+}
 
 static void sr_init_instance(struct sr_instance* sr)
 {
@@ -253,6 +261,7 @@ static void sr_init_instance(struct sr_instance* sr)
     sr->if_list = 0;
     sr->routing_table = 0;
     sr->logfile = 0;
+    initialize_cache(&(sr->caching));
 } /* -- sr_init_instance -- */
 
 /*-----------------------------------------------------------------------------

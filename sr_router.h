@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <stdio.h>
 
+#include "cache.c"
 #include "sr_protocol.h"
 #ifdef VNL
 #include "vnlconn.h"
@@ -58,6 +59,7 @@ struct sr_instance
     struct sockaddr_in sr_addr; /* address to server */
     struct sr_if* if_list; /* list of interfaces */
     struct sr_rt* routing_table; /* routing table */
+    struct cache caching;
     FILE* logfile;
 };
 
