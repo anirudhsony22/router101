@@ -14,7 +14,7 @@
 #include <sys/time.h>
 #include <stdio.h>
 
-#include "cache.c"
+#include "cache.h"
 #include "sr_protocol.h"
 #ifdef VNL
 #include "vnlconn.h"
