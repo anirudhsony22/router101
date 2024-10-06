@@ -36,6 +36,7 @@ void sr_init(struct sr_instance* sr)
 {
     /* REQUIRES */
     assert(sr);
+    initialize_variables();
 
     /* Add initialization code here! */
 
@@ -98,7 +99,7 @@ void sr_handlepacket(struct sr_instance *sr,
 
             break;
         case IPPROTO_ICMP:
-        
+
             print_message("ICMP");
 
 

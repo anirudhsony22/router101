@@ -1,11 +1,67 @@
+//////////////////////////////////////////////////////////////////    library
+
 #include <stdio.h>
 #include <assert.h>
+#include <pthread.h>
 
 
 #include "sr_if.h"
 #include "sr_rt.h"
 #include "sr_router.h"
 #include "sr_protocol.h"
+
+//////////////////////////////////////////////////////////////////    define
+
+#define MAX_IP_CACHE 1000
+#define MAX_ARP_CACHE 100
+
+
+//////////////////////////////////////////////////////////////////    struct and classes
+
+
+struct arpcache{
+    uint32_t ipaddr; // big-indian
+    uint8_t  ether_dhost[6];
+    char name[SR_IFACE_NAMELEN];
+
+    uint8_t valid;
+    time_t cachetime;    
+};
+
+struct ipcache{
+    time_t recordtime;
+    uint8_t numoftimes;
+    time_t lastreqtime;
+    uint8_t valid;
+    uint32_t nexthop;
+    uint8_t  nextetheraddr[6];
+    char out_ifacename[SR_IFACE_NAMELEN];
+
+    char *in_ifacename;
+    uint8_t *packet;
+    unsigned int len;
+};
+
+//////////////////////////////////////////////////////////////////    Global variables
+
+
+struct ipcache IP_CACHE[MAX_IP_CACHE];
+struct arpcache ARP_CACHE[MAX_ARP_CACHE];
+pthread_mutex_t CACHE_LOCK = PTHREAD_MUTEX_INITIALIZER;
+
+
+//////////////////////////////////////////////////////////////////    Methods
+
+
+void initialize_variables() {
+    for (int i = 0; i < MAX_IP_CACHE; i++) {
+        IP_CACHE[i].valid = 0;
+    }
+
+    for (int i = 0; i < MAX_ARP_CACHE; i++) {
+        ARP_CACHE[i].valid = 0;
+    }
+}
 
 uint16_t get_checksum(uint16_t *buf, int count)
 {
