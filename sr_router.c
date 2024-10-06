@@ -22,6 +22,8 @@
 #include "sr_router.h"
 #include "sr_protocol.h"
 
+#include "sr_utils.c"
+
 /*--------------------------------------------------------------------- 
  * Method: sr_init(void)
  * Scope:  Global
@@ -56,20 +58,57 @@ void sr_init(struct sr_instance* sr)
  * the method call.
  *
  *---------------------------------------------------------------------*/
-
-void sr_handlepacket(struct sr_instance* sr, 
-        uint8_t * packet/* lent */,
-        unsigned int len,
-        char* interface/* lent */)
+void sr_handlepacket(struct sr_instance *sr,
+                     uint8_t *packet /* lent */,
+                     unsigned int len,
+                     char *interface /* lent */)
 {
+    // ask prof wherther to do any kind of length check of the packets
     /* REQUIRES */
     assert(sr);
     assert(packet);
     assert(interface);
 
-    printf("*** -> Received packet of length %d \n",len);
+    printf("*** -> Received packet of length %d \n", len);
 
-}/* end sr_ForwardPacket */
+    if (!is_valid_ethernet_packet(len)) {
+        print_drop();
+        return;
+    }
+
+    struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
+
+    switch (ntohs(eth_hdr->ether_type)) {
+        case ETHERTYPE_ARP:
+
+            print_message("ARP");
+            handle_arp(sr, packet, len, interface);
+
+
+            break;
+        case ETHERTYPE_IP:
+
+            print_message("IP");
+            if (!is_valid_ip_packet(packet)) // also decreasing ttl
+            {
+                print_drop();
+                return;
+            }
+
+
+            break;
+        case IPPROTO_ICMP:
+        
+            print_message("ICMP");
+
+
+            break;
+        default:
+            printf("Received an unknown packet type: 0x%04x\n", ntohs(eth_hdr->ether_type));
+            print_drop();
+    }
+    /* Add IP and ICMP handling here */
+} /* end sr_ForwardPacket */
 
 
 /*--------------------------------------------------------------------- 
