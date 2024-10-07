@@ -13,6 +13,7 @@
 
 #define MAX_IP_CACHE 1000
 #define MAX_ARP_CACHE 100
+#define MAX_ARP_CACHE_TIME 10
 #define ENABLE_PRINT 0
 
 //////////////////////////////////////////////////////////////////    struct and classes
@@ -147,8 +148,40 @@ struct ipcache *create_ipcache_entry(
 
 //////////////////////////////////////////////////////////////////    Other Methods
 
+void cleanup_arpcache() { // must be under the lock
+    time_t cur_time = time(NULL);
+
+    for (int i = 0; i < MAX_ARP_CACHE; i++) {
+        if (ARP_CACHE[i].valid == 1) {
+            time_t diff = cur_time - ARP_CACHE[i].cachetime;
+            if (diff > MAX_ARP_CACHE_TIME) {
+                ARP_CACHE[i].valid = 0;
+            }
+        }
+    }
+}
+
+uint8_t* lookup_arpcache(u_int32_t target_ip) {
+    pthread_mutex_lock(&CACHE_LOCK);
+
+    cleanup_arpcache();
+    
+    for (int i = 0; i < MAX_ARP_CACHE; i++) {
+        if (ARP_CACHE[i].valid == 1) {
+            if (target_ip == ARP_CACHE[i].ipaddr) {
+                return ARP_CACHE[i].ether_dhost;
+            }
+        }
+    } 
+
+    pthread_mutex_unlock(&CACHE_LOCK);
+    return NULL;
+}
+
 int buffer_arp_entry(struct arpcache *new_entry) {
     pthread_mutex_lock(&CACHE_LOCK);
+
+    cleanup_arpcache(); 
 
     for (int i = 0; i < MAX_ARP_CACHE; i++) {
         if (ARP_CACHE[i].ipaddr == new_entry->ipaddr) { // Check for IP address match
@@ -197,6 +230,34 @@ int buffer_ip_packet(struct ipcache *new_entry)
 
     pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
     return 0; // Return failure if no invalid entry was found (array full)
+}
+
+void send_relevent_ipcache_entries(struct arpcache* arpcache_entry,  struct sr_instance *sr) 
+{
+    pthread_mutex_lock(&CACHE_LOCK);  // Lock the mutex to prevent race conditions
+
+    for (int i = 0; i < MAX_IP_CACHE; i++)
+    {
+        if (IP_CACHE[i].valid == 1 && IP_CACHE[i].nexthop == arpcache_entry->ipaddr)
+        {                            
+            uint8_t* packet = IP_CACHE[i].packet;
+            struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
+            struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(packet + sizeof(struct sr_ethernet_hdr));
+
+            struct sr_if *next_iface = sr_get_interface(sr, IP_CACHE[i].out_ifacename);
+            
+            memset(eth_hdr->ether_dhost, arpcache_entry->ether_dhost, ETHER_ADDR_LEN);
+            memcpy(eth_hdr->ether_shost, next_iface->addr, ETHER_ADDR_LEN);
+
+            sr_send_packet(sr, packet, IP_CACHE[i].len, next_iface->name);
+
+            print_message("@@@@@@@@@@@@@@@@@@ Sending IP packet successfully from cache");
+
+            IP_CACHE[i].valid = 0;
+        }
+    }
+
+    pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
 }
 
 void initialize_variables()
@@ -290,7 +351,7 @@ void print_message(const char *message)
     printf("-------- %s\n", message);
 }
 
-void update_ethernet_header(uint8_t *packet, struct sr_if *iface)
+void update_ethernet_header_arp_reply(uint8_t *packet, struct sr_if *iface)
 {
     struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
 
@@ -352,14 +413,21 @@ void handle_arp(struct sr_instance *sr,
             prepare_arp_reply(sr, iface, arp_hdr, eth_hdr->ether_shost, interface);
 
             // Update Ethernet header
-            update_ethernet_header(packet, iface);
+            update_ethernet_header_arp_reply(packet, iface);
 
             // Send the ARP reply
             sr_send_packet(sr, packet, len, interface);
         }
     } else {
         print_message("Processing ARP Reply");
-        print_arp_header(arp_hdr);
+        struct arpcache* new_arpcache = create_arpcache_entry(arp_hdr->ar_sip, arp_hdr->ar_sha, interface);
+        int success = buffer_arp_entry(new_arpcache);
+
+        if (!success) {
+            print_message("Alert!!!: ARP buffer full! Cannot put the arp entry into the buffer!");
+        } else {
+            send_relevent_ipcache_entries(new_arpcache, sr);
+        }
     }
 }
 
@@ -397,7 +465,7 @@ void handle_ip(uint8_t *packet,
         rt_header = rt_header->next;
     }
 
-                    !ENABLE_PRINT ? : print_message("handle ip 3");
+    !ENABLE_PRINT ? : print_message("handle ip 3");
 
 
     if (nxthop.s_addr == 0)
@@ -414,8 +482,32 @@ void handle_ip(uint8_t *packet,
     printf("-------- found next hop for IP: %u\n", nxthop.s_addr);
     struct sr_if* next_iface = sr_get_interface(sr, next_interface);
 
-    uint8_t *arp_packet = create_arp(next_iface, nxthop.s_addr);
-    sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), next_interface);
+    // looking up cache
+    uint8_t* target_mac = lookup_arpcache(nxthop.s_addr);
+
+    if (target_mac == NULL) {
+        // save it to buffer
+        struct ipcache* new_ipcache = create_ipcache_entry(packet, len, interface, nxthop.s_addr, NULL, next_interface);
+        int success = buffer_ip_packet(new_ipcache);
+
+        if (success) {
+            // Send ARP if buffer was successful
+            uint8_t *arp_packet = create_arp(next_iface, nxthop.s_addr);
+            sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), next_interface);
+        } else {
+            print_message("Dropping this packet: IP Buffer full");
+            
+            //todo: Send ICMP
+            
+            return;
+        }
+    } else {
+
+        memset(eth_hdr->ether_dhost, target_mac, ETHER_ADDR_LEN);
+        memcpy(eth_hdr->ether_shost, next_iface->addr, ETHER_ADDR_LEN);
+
+        sr_send_packet(sr, packet, len, next_interface);
+    }
 }
 
 
