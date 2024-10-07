@@ -85,7 +85,6 @@ void sr_handlepacket(struct sr_instance *sr,
             print_message("ARP");
             handle_arp(sr, packet, len, interface);
 
-
             break;
         case ETHERTYPE_IP:
 
@@ -96,12 +95,13 @@ void sr_handlepacket(struct sr_instance *sr,
                 return;
             }
 
+            populate_ip_header(packet);
+            handle_ip(packet, sr, len, interface);
 
             break;
         case IPPROTO_ICMP:
 
             print_message("ICMP");
-
 
             break;
         default:
