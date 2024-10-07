@@ -48,27 +48,56 @@ struct ipcache IP_CACHE[MAX_IP_CACHE];
 struct arpcache ARP_CACHE[MAX_ARP_CACHE];
 pthread_mutex_t CACHE_LOCK = PTHREAD_MUTEX_INITIALIZER;
 
-//////////////////////////////////////////////////////////////////    Methods
+//////////////////////////////////////////////////////////////////    Create Methods
 
-int buffer_ip_packet(struct ipcache *new_entry)
+uint8_t *create_arp(struct sr_if *iface, uint32_t target_ip)
 {
-    pthread_mutex_lock(&CACHE_LOCK);  // Lock the mutex to prevent race conditions
+    // Allocate space for a new ARP request  packet
+    unsigned int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
+    uint8_t *packet = (uint8_t *)malloc(len);
 
-    for (int i = 0; i < MAX_IP_CACHE; i++)
-    {
-        if (IP_CACHE[i].valid == 0)
-        {                            
-            // Copy the content of new_entry to the IP_CACHE at index i
-            IP_CACHE[i] = *new_entry; // Dereference new_entry to copy the data
-            IP_CACHE[i].valid = 1;    // Mark the entry as valid
-            pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
-            return 1;                // Return success
-        }
+    memset(packet, 0, len);
+
+    // Find interface we should be sending the packet out on
+    //   struct sr_if *out_iface = sr_iface_for_dst(sr, tip);
+    struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
+    struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(packet + sizeof(struct sr_ethernet_hdr));
+
+    // Fill in header information
+    memset(eth_hdr->ether_dhost, 0xff, ETHER_ADDR_LEN);
+    memcpy(eth_hdr->ether_shost, iface->addr, ETHER_ADDR_LEN);
+    
+    eth_hdr->ether_type = htons(ETHERTYPE_ARP);
+
+    arp_hdr->ar_hrd = htons(ARPHDR_ETHER);
+    arp_hdr->ar_pro = htons(ETHERTYPE_IP);
+    arp_hdr->ar_hln = ETHER_ADDR_LEN;
+    arp_hdr->ar_pln = 4;
+    arp_hdr->ar_op = htons(ARP_REQUEST);
+    memcpy(arp_hdr->ar_sha, iface->addr, ETHER_ADDR_LEN);
+    arp_hdr->ar_sip = iface->ip;
+    memset(arp_hdr->ar_tha, 0xff, ETHER_ADDR_LEN);
+    arp_hdr->ar_tip = target_ip;
+
+    return packet;
+}
+
+struct arpcache *create_arpcache_entry(uint32_t ipaddr, const uint8_t ether_dhost[6], const char *iface_name) {
+    struct arpcache *entry = malloc(sizeof(struct arpcache));
+    if (!entry) {
+        printf("Memory allocation failed\n");
+        return NULL;
     }
 
-    pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
-    return 0; // Return failure if no invalid entry was found (array full)
+    entry->ipaddr = ipaddr;
+    memcpy(entry->ether_dhost, ether_dhost, 6);
+    strncpy(entry->name, iface_name, SR_IFACE_NAMELEN);
+    entry->valid = 1;  // Set valid flag to 1 since it's a fresh entry
+    entry->cachetime = time(NULL); // Set current time
+
+    return entry;
 }
+
 
 struct ipcache *create_ipcache_entry(
     uint8_t *packet,
@@ -95,7 +124,7 @@ struct ipcache *create_ipcache_entry(
 
     // Set network details
     entry->nexthop = nexthop;
-    memcpy(entry->nextetheraddr, nextetheraddr, 6);                 // DUMMY mac address
+    // memcpy(entry->nextetheraddr, nextetheraddr, 6);                 // DUMMY mac address
     strncpy(entry->out_ifacename, out_ifacename, SR_IFACE_NAMELEN); // Copy outgoing interface name
 
     // Allocate memory and copy the incoming interface name
@@ -115,6 +144,8 @@ struct ipcache *create_ipcache_entry(
 
     return entry;
 }
+
+//////////////////////////////////////////////////////////////////    Other Methods
 
 int buffer_arp_entry(struct arpcache *new_entry) {
     pthread_mutex_lock(&CACHE_LOCK);
@@ -147,20 +178,25 @@ int buffer_arp_entry(struct arpcache *new_entry) {
     return 0; // No space or no invalid entry available
 }
 
-struct arpcache *create_arpcache_entry(uint32_t ipaddr, const uint8_t ether_dhost[6], const char *iface_name) {
-    struct arpcache *entry = malloc(sizeof(struct arpcache));
-    if (!entry) {
-        printf("Memory allocation failed\n");
-        return NULL;
+
+int buffer_ip_packet(struct ipcache *new_entry)
+{
+    pthread_mutex_lock(&CACHE_LOCK);  // Lock the mutex to prevent race conditions
+
+    for (int i = 0; i < MAX_IP_CACHE; i++)
+    {
+        if (IP_CACHE[i].valid == 0)
+        {                            
+            // Copy the content of new_entry to the IP_CACHE at index i
+            IP_CACHE[i] = *new_entry; // Dereference new_entry to copy the data
+            IP_CACHE[i].valid = 1;    // Mark the entry as valid
+            pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
+            return 1;                // Return success
+        }
     }
 
-    entry->ipaddr = ipaddr;
-    memcpy(entry->ether_dhost, ether_dhost, 6);
-    strncpy(entry->name, iface_name, SR_IFACE_NAMELEN);
-    entry->valid = 1;  // Set valid flag to 1 since it's a fresh entry
-    entry->cachetime = time(NULL); // Set current time
-
-    return entry;
+    pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
+    return 0; // Return failure if no invalid entry was found (array full)
 }
 
 void initialize_variables()
@@ -277,6 +313,24 @@ void prepare_arp_reply(struct sr_instance *sr, struct sr_if *iface, struct sr_ar
     req_hdr->ar_tip = temp_ip;
 }
 
+void populate_ip_header(uint8_t *packet)
+{
+    struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+
+    // TTL
+    ip_hdr->ip_ttl--;
+
+    // Checksum setup
+    ip_hdr->ip_sum = 0;
+    int header_len = ip_hdr->ip_hl * 4;
+    ip_hdr->ip_sum = get_checksum((uint16_t *)ip_hdr, header_len / 2);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////    Handling Methods
+
+// char* ip_to_string(uint32_t ip) {
+
 void handle_arp(struct sr_instance *sr,
                 uint8_t *packet /* lent */,
                 unsigned int len,
@@ -303,20 +357,10 @@ void handle_arp(struct sr_instance *sr,
             // Send the ARP reply
             sr_send_packet(sr, packet, len, interface);
         }
+    } else {
+        print_message("Processing ARP Reply");
+        print_arp_header(arp_hdr);
     }
-}
-
-void populate_ip_header(uint8_t *packet)
-{
-    struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
-
-    // TTL
-    ip_hdr->ip_ttl--;
-
-    // Checksum setup
-    ip_hdr->ip_sum = 0;
-    int header_len = ip_hdr->ip_hl * 4;
-    ip_hdr->ip_sum = get_checksum((uint16_t *)ip_hdr, header_len / 2);
 }
 
 void handle_ip(uint8_t *packet,
@@ -368,40 +412,49 @@ void handle_ip(uint8_t *packet,
     }
 
     printf("-------- found next hop for IP: %u\n", nxthop.s_addr);
+    struct sr_if* next_iface = sr_get_interface(sr, next_interface);
 
-    // int found_in_cache = 0;
-    // uint8_t dest_mac[ETHER_ADDR_LEN];
-    // // Lock here - is it necessary?
-    // struct arpcache *arpcacheheadercurrent = arpcacheheader;
-    // while (arpcacheheadercurrent != NULL)
-    // {
-    //     if (arpcacheheadercurrent->ipaddr == nxthop.s_addr)
-    //     {
-    //         time_t dif = time(NULL) - arpcacheheadercurrent->timestamp;
-
-    //         if (dif <= 10)
-    //         {
-    //             found_in_cache = 1;
-    //             memcpy(dest_mac, arpcacheheadercurrent->ether_dhost, sizeof(dest_mac));
-
-    //             // update ethernet header
-    //             struct sr_if *iface = sr_get_interface(sr, next_interface);
-    //             update_ethernet_header(packet, iface);
-
-    //             // send the packet
-    //             sr_send_packet(sr, packet, len, next_interface);
-    //             return;
-    //         }
-
-    //         break;
-    //     }
-    //     arpcacheheadercurrent = arpcacheheadercurrent->next;
-    // }
-    // // Unlock here
-    // //  send arp
-    // uint8_t *arp_packet = create_arp(next_interface, nxthop.s_addr);
-    // sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), next_interface);
-
-    // // store the packet
-
+    uint8_t *arp_packet = create_arp(next_iface, nxthop.s_addr);
+    sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), next_interface);
 }
+
+
+///////////////////////////////////////////////////////////////////////////////////////////// Dumps
+
+
+//     struct in_addr ip_addr;
+//     ip_addr.s_addr = ip;
+//     return inet_ntoa(ip_addr);
+// }
+
+// // Function to print MAC address in human-readable format
+// void print_mac_address(const char* label, const unsigned char* mac) {
+//     printf("%s: %02x:%02x:%02x:%02x:%02x:%02x\n", label, 
+//            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+// }
+
+// // Function to print the contents of the ARP header
+// void print_arp_header(const struct sr_arphdr* arp_hdr) {
+//     printf("Hardware type: %u\n", ntohs(arp_hdr->ar_hrd));
+//     printf("Protocol type: %u\n", ntohs(arp_hdr->ar_pro));
+//     printf("Hardware address length: %u bytes\n", arp_hdr->ar_hln);
+//     printf("Protocol address length: %u bytes\n", arp_hdr->ar_pln);
+//     printf("ARP opcode: %u\n", ntohs(arp_hdr->ar_op));
+    
+//     print_mac_address("Sender hardware address", arp_hdr->ar_sha);
+//     printf("Sender IP address: %s\n", ip_to_string(arp_hdr->ar_sip));
+    
+//     print_mac_address("Target hardware address", arp_hdr->ar_tha);
+//     printf("Target IP address: %s\n", ip_to_string(arp_hdr->ar_tip));
+// }
+
+
+
+// assert(packet);
+// assert(len);
+// assert(interface);
+// assert(nxthop.s_addr);
+// assert(next_interface);
+
+// struct ipcache* new_en = create_ipcache_entry(packet, len, interface, nxthop.s_addr, NULL, next_interface);
+// buffer_ip_packet(new_en);

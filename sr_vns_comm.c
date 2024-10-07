@@ -552,6 +552,16 @@ sr_ether_addrs_match_interface( struct sr_instance* sr, /* borrowed */
 
     if ( memcmp( ether_hdr->ether_shost, iface->addr, ETHER_ADDR_LEN) != 0 )
     {
+        // printf("Interface %s, Expected Addr: ", iface->name);
+        // for(int i = 0; i < ETHER_ADDR_LEN; i++)
+        //     printf("%02x:", iface->addr[i]);
+        // printf("\nReceived Packet Src Addr: ");
+        // for(int i = 0; i < ETHER_ADDR_LEN; i++)
+        //     printf("%02x:", ether_hdr->ether_shost[i]);
+        // printf("\n");
+        // printf("%s\n",iface->name);
+        // printf("%u\n", ether_hdr->ether_dhost);
+        // printf("%s\n", iface->addr);
         fprintf( stderr, "** Error, source address does not match interface\n");
         return 0;
     }
