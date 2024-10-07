@@ -36,8 +36,9 @@ void sr_init(struct sr_instance* sr)
 {
     /* REQUIRES */
     assert(sr);
+    print_message("before init ************");
     initialize_variables();
-
+    print_message("after init ************");
     /* Add initialization code here! */
 
 } /* -- sr_init -- */
@@ -96,6 +97,7 @@ void sr_handlepacket(struct sr_instance *sr,
             }
 
             populate_ip_header(packet);
+            !ENABLE_PRINT ? : print_message("done populate ip header!!!!");
             handle_ip(packet, sr, len, interface);
 
             break;

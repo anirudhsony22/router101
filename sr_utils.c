@@ -13,6 +13,7 @@
 
 #define MAX_IP_CACHE 1000
 #define MAX_ARP_CACHE 100
+#define ENABLE_PRINT 0
 
 //////////////////////////////////////////////////////////////////    struct and classes
 
@@ -336,8 +337,13 @@ void handle_ip(uint8_t *packet,
     nxthop.s_addr = 0;
     char next_interface[SR_IFACE_NAMELEN];
 
+    !ENABLE_PRINT ? : print_message("handle ip 1");
+
+
     while (rt_header != NULL)
     {
+        !ENABLE_PRINT ? : print_message("handle ip 2");
+
         if ((rt_header->dest.s_addr & rt_header->mask.s_addr) == ((ip_hdr->ip_dst.s_addr) & rt_header->mask.s_addr) && mask.s_addr <= ntohl(rt_header->mask.s_addr))
         {
             mask.s_addr = ntohl(rt_header->mask.s_addr);
@@ -347,12 +353,21 @@ void handle_ip(uint8_t *packet,
         rt_header = rt_header->next;
     }
 
+                    !ENABLE_PRINT ? : print_message("handle ip 3");
+
+
     if (nxthop.s_addr == 0)
     {
-        nxthop.s_addr = rt_header->dest.s_addr;
+        !ENABLE_PRINT ? : print_message("handle ip A");
+        !ENABLE_PRINT ? :  printf("%u\n", nxthop.s_addr);
+        !ENABLE_PRINT ? :  printf("%u\n", rt_header->dest.s_addr);
+
+        nxthop.s_addr = ip_hdr->ip_dst.s_addr;
+                        !ENABLE_PRINT ? :  print_message("handle ip B");
+
     }
 
-    printf("-------- found next hop for IP: %u", nxthop.s_addr);
+    printf("-------- found next hop for IP: %u\n", nxthop.s_addr);
 
     // int found_in_cache = 0;
     // uint8_t dest_mac[ETHER_ADDR_LEN];
