@@ -67,16 +67,22 @@ void sr_handlepacket(struct sr_instance *sr,
 {
     // ask prof wherther to do any kind of length check of the packets
     /* REQUIRES */
+    printf("###############################\nRec'd Packet\n############################\n");
+
     assert(sr);
     assert(packet);
     assert(interface);
     precd+=1;
     // printf("*** -> Received packet of length %d \n", len);
-    printf("Received Packet\n");
+    // printf("Received Packet\n");
+
+    print_new_packet_stats(packet, interface);
 
     if (!is_valid_ethernet_packet(len)) {
         pdrop+=1;
         print_drop();
+
+        print_stats();
         return;
     }
 
@@ -86,35 +92,39 @@ void sr_handlepacket(struct sr_instance *sr,
         case ETHERTYPE_ARP:
             arprecd+=1;
             // print_message("ARP");
-            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
+            // printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
             handle_arp(sr, packet, len, interface);
 
             break;
         case ETHERTYPE_IP:
             iprecd+=1;
             // print_message("IP");
-            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
+            // printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
             if (!is_valid_ip_packet(packet)) // also decreasing ttl
             {
                 pdrop+=1;
                 print_drop();
+
+                print_stats();
                 return;
             }
 
             populate_ip_header(packet);
-            !ENABLE_PRINT ? : print_message("done populate ip header!!!!");
+            // !ENABLE_PRINT ? : print_message("done populate ip header!!!!");
             handle_ip(packet, sr, len, interface);
 
             break;
         case IPPROTO_ICMP:
-            print_message("ICMP");
+            // print_message("ICMP");
 
             break;
         default:
-            printf("Received an unknown packet type: 0x%04x\n", ntohs(eth_hdr->ether_type));
+            // printf("Received an unknown packet type: 0x%04x\n", ntohs(eth_hdr->ether_type));
             pdrop+=1;
             print_drop();
     }
+
+    print_stats();
     /* Add IP and ICMP handling here */
 } /* end sr_ForwardPacket */
 

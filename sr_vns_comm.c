@@ -585,13 +585,49 @@ sr_ether_addrs_match_interface( struct sr_instance* sr, /* borrowed */
  *
  *---------------------------------------------------------------------------*/
 
+void print_outgoing_packet_stats(uint8_t* packet, char* interface) {
+    struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
+
+    if (ntohs(eth_hdr->ether_type) == ETHERTYPE_ARP) {
+        struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(packet + sizeof(struct sr_ethernet_hdr));
+
+        if (ntohs(arp_hdr->ar_op) == ARP_REQUEST) {
+            printf("*** Sending packet *** Type: ARP REQUEST IFACE: %s", interface);
+        } else {
+            printf("*** Sending packet *** Type: ARP REPLY IFACE: %s", interface);
+        }
+
+        printf("  Source IP: ");
+        print_ip_address(arp_hdr->ar_sip);
+        printf("  Target IP: ");
+        print_ip_address(arp_hdr->ar_tip);        
+    } else {
+        struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+        printf("*** Sending packet *** Type: IP IFACE: %s", interface);
+        printf("  Source IP: ");
+        print_ip_address(ip_hdr->ip_src.s_addr);
+        printf("  Target IP: ");
+        print_ip_address(ip_hdr->ip_dst.s_addr);
+    }
+
+    printf(" Source MAC: ");
+    print_mac_address("", eth_hdr->ether_shost);
+    printf(" Dest MAC: ");
+    print_mac_address("", eth_hdr->ether_dhost);
+
+    printf("\n");
+}
+
+
 int sr_send_packet(struct sr_instance* sr /* borrowed */,
                          uint8_t* buf /* borrowed */ ,
                          unsigned int len,
                          const char* iface /* borrowed */)
 {
     // printf("--------Hurray!!!Sending the packet---------\n");
-    printf("Sending Packet\n");
+
+    print_outgoing_packet_stats(buf, iface);
+
     c_packet_header *sr_pkt;
     unsigned int total_len =  len + (sizeof(c_packet_header));
 

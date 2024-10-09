@@ -150,7 +150,7 @@ struct sr_arphdr
 } __attribute__ ((packed)) ;
 
 
-struct icmp_hdr {
+struct icmp {
     uint8_t  icmp_type;    /* message type */
     uint8_t  icmp_code;    /* type sub-code */
     uint16_t icmp_cksum;   /* checksum */

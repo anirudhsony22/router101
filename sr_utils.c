@@ -24,6 +24,7 @@ int arpsent=0;
 int precd=0;
 int psent=0;
 int pdrop=0;
+unsigned char mac_address[6] = {0x16, 0xf0, 0xa5, 0x9a, 0x78, 0x0e};
 
 //////////////////////////////////////////////////////////////////    struct and classes
 
@@ -262,22 +263,28 @@ void send_relevent_ipcache_entries(struct arpcache* arpcache_entry,  struct sr_i
 
             struct sr_if *next_iface = sr_get_interface(sr, IP_CACHE[i].out_ifacename);
             
-            memset(eth_hdr->ether_dhost, arpcache_entry->ether_dhost, ETHER_ADDR_LEN);
+            memcpy(eth_hdr->ether_dhost, arpcache_entry->ether_dhost, ETHER_ADDR_LEN);
             memcpy(eth_hdr->ether_shost, next_iface->addr, ETHER_ADDR_LEN);
+
+            printf("\n$$$$$$$$$$$$$$$$$$$$$$$ $$$$$$$$$$$$$$$$$$");
+            print_mac_address("", eth_hdr->ether_dhost);
+            printf(" ----- ");
+            print_mac_address("", arpcache_entry->ether_dhost);
+            printf("\n");
 
             sr_send_packet(sr, packet, IP_CACHE[i].len, next_iface->name);
             psent+=1;
             ipsent+=1;
-            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
+            // printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
 
-            print_message("@@@@@@@@@@@@@@@@@@ Sending IP packet successfully from cache");
+            // print_message("@@@@@@@@@@@@@@@@@@ Sending IP packet successfully from cache");
 
             IP_CACHE[i].valid = 0;
         }
     }
 
     pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
-    printf("---------Valid Packets == %d---------\n",ip_packet_counter);
+    // printf("---------Valid Packets == %d---------\n",ip_packet_counter);
 }
 
 void initialize_variables()
@@ -410,7 +417,63 @@ void populate_ip_header(uint8_t *packet)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////    Handling Methods
 
-// char* ip_to_string(uint32_t ip) {
+// Function to compute IP checksum
+uint16_t compute_ip_checksum(uint16_t *addr, int len) {
+    uint32_t sum = 0;
+    for (; len > 1; len -= 2) {
+        sum += *addr++;
+    }
+    if (len == 1) {
+        sum += *(uint8_t *)addr;
+    }
+
+    // Fold sum to 16 bits: add carrier to result
+    while (sum >> 16) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    // One's complement
+    return (uint16_t)(~sum);
+}
+
+uint8_t *create_dummy_ip_packet(int *packet_size) {
+    // Define total size of the packet (IP header + payload)
+    int size = sizeof(struct ip) + 20;  // 20 bytes of payload
+    uint8_t *packet = malloc(size);
+
+    if (!packet) {
+        perror("Failed to allocate packet");
+        return NULL;
+    }
+
+    // Zero out the packet data
+    memset(packet, 0, size);
+
+    // IP Header construction
+    struct ip *ip_hdr = (struct ip *)packet;
+    ip_hdr->ip_hl = 5;  // IP header length (5 * 4 = 20 bytes)
+    ip_hdr->ip_v = 4;   // IP version 4
+    ip_hdr->ip_tos = 0; // Type of service
+    ip_hdr->ip_len = htons(size); // Total packet length
+    ip_hdr->ip_id = htons(54321); // ID of this packet
+    ip_hdr->ip_off = 0; // Fragment offset
+    ip_hdr->ip_ttl = 64; // Time to live
+    ip_hdr->ip_p = IPPROTO_TCP; // Protocol (TCP)
+    ip_hdr->ip_sum = 0; // Checksum (0 for now)
+    ip_hdr->ip_src.s_addr = htonl(2887586454); // Source IP
+    ip_hdr->ip_dst.s_addr = htonl(2887587450); // Destination IP
+
+    // Calculate the IP checksum
+    ip_hdr->ip_sum = compute_ip_checksum((uint16_t *)ip_hdr, ip_hdr->ip_hl * 4);
+
+    // Set the packet_size for the caller
+    *packet_size = size;
+
+    return packet;
+}
+
+
+
 
 void handle_arp(struct sr_instance *sr,
                 uint8_t *packet /* lent */,
@@ -421,14 +484,15 @@ void handle_arp(struct sr_instance *sr,
     struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
     struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(packet + sizeof(struct sr_ethernet_hdr));
     struct sr_if *iface = sr_get_interface(sr, interface);
-
+    // print_ip_address(arp_hdr->ar_sip);
     if (ntohs(arp_hdr->ar_op) == ARP_REQUEST)
     {
-        print_message("Processing ARP Request");
+        // print_message("Processing ARP Request");
         /* Check if the ARP request is for one of our router's interfaces */
+        // printf("")
         if (iface && iface->ip == arp_hdr->ar_tip)
         {
-            print_message("Processing reply - IP matched");
+            // print_message("Processing reply - IP matched");
             /* Prepare ARP reply */
             prepare_arp_reply(sr, iface, arp_hdr, eth_hdr->ether_shost, interface);
 
@@ -439,17 +503,17 @@ void handle_arp(struct sr_instance *sr,
             sr_send_packet(sr, packet, len, interface);
             arpsent+=1;
             psent+=1;
-            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
+            // printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
         }
     } else {
-        print_message("Processing ARP Reply");
+        // print_message("Processing ARP Reply");
         struct arpcache* new_arpcache = create_arpcache_entry(arp_hdr->ar_sip, arp_hdr->ar_sha, interface);
         int success = buffer_arp_entry(new_arpcache);
 
         if (!success) {
-            print_message("Alert!!!: ARP buffer full! Cannot put the arp entry into the buffer!");
+            // print_message("Alert!!!: ARP buffer full! Cannot put the arp entry into the buffer!");
         } else {
-            print_message("ARP added to Cache");
+            // print_message("ARP added to Cache");
             send_relevent_ipcache_entries(new_arpcache, sr);
         }
     }
@@ -465,7 +529,7 @@ void handle_ip(uint8_t *packet,
     struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
     int protocol = ip_hdr->ip_p;
     if (protocol==IPPROTO_ICMP){
-        print_message("ICMP packet rec'd");
+        // print_message("ICMP packet rec'd");
         // handle_icmp(*packet,len, sr, interface, eth_hdr, ip_hdr);
         // return 1;
     }
@@ -514,9 +578,9 @@ void handle_ip(uint8_t *packet,
 
     // looking up cache
     uint8_t* target_mac = lookup_arpcache(nxthop.s_addr);
-    printf("-----------target MAC : %u -----------",target_mac);
+    printf("\n\n-----------target MAC : %u -----------\n",target_mac);
     if (target_mac == NULL) {
-        printf("-----------------!!!!!Didn't find a valid ARP!!!!!----------------\n");
+        // printf("-----------------!!!!!Didn't find a valid ARP!!!!!----------------\n");
         // save it to buffer
         struct ipcache* new_ipcache = create_ipcache_entry(packet, len, interface, nxthop.s_addr, NULL, next_interface);
         int success = buffer_ip_packet(new_ipcache);
@@ -527,9 +591,9 @@ void handle_ip(uint8_t *packet,
             sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), next_interface);
             arpsent+=1;
             psent+=1;
-            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
+            // printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
         } else {
-            print_message("Dropping this packet: IP Buffer full");
+            // print_message("Dropping this packet: IP Buffer full");
             
             //todo: Send ICMP
             
@@ -537,15 +601,15 @@ void handle_ip(uint8_t *packet,
         }
     } else {
 
-        printf("Found an existing MAC from ARP Cache\n");
+        // printf("Found an existing MAC from ARP Cache\n");
 
-        memset(eth_hdr->ether_dhost, target_mac, ETHER_ADDR_LEN);
+        memcpy(eth_hdr->ether_dhost, target_mac, ETHER_ADDR_LEN);
         memcpy(eth_hdr->ether_shost, next_iface->addr, ETHER_ADDR_LEN);
 
         sr_send_packet(sr, packet, len, next_interface);
         ipsent+=1;
         psent+=1;
-        printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
+        // printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
     }
 }
 
@@ -557,71 +621,194 @@ void handle_icmp(uint8_t *packet,
                  struct sr_ethernet_hdr* eth_hdr,
                  struct ip* ip_hdr)
 {
-    print_message("Entered Handle ICMP");
+    // print_message("Entered Handle ICMP");
     unsigned int ip_header_length = ip_hdr->ip_hl * 4;
 
-    print_message("Entering Length check");
-    printf("len - %d, needed - %d", len, sizeof(struct sr_ethernet_hdr) + ip_header_length + sizeof(struct icmp_hdr));
-    if (len < sizeof(struct sr_ethernet_hdr) + ip_header_length + sizeof(struct icmp_hdr)) {
-        fprintf(stderr, "Packet too short to contain ICMP header\n");
+    // print_message("Entering Length check");
+    // printf("len - %d, needed - %d", len, sizeof(struct sr_ethernet_hdr) + ip_header_length + sizeof(struct icmp_hdr));
+    // if (len < sizeof(struct sr_ethernet_hdr) + ip_header_length + sizeof(struct icmp_hdr)) {
+    //     fprintf(stderr, "Packet too short to contain ICMP header\n");
+    //     return;
+    // }
+
+    // print_message("Abstracting ICMP Header");
+    struct icmp *icmphdr = (struct icmp *)(packet + sizeof(struct sr_ethernet_hdr) + ip_header_length);
+
+    if ((uint8_t *)icmphdr + sizeof(struct icmp) > packet + len) {
+    fprintf(stderr, "ICMP header extends beyond the packet buffer\n");
+    return;
+    }
+    printf("IP Header Length: %u bytes\n", ip_header_length);
+    printf("Total Packet Length: %u bytes\n", len);
+    printf("Offset to ICMP Header: %lu bytes\n", sizeof(struct sr_ethernet_hdr) + ip_header_length);
+    printf("Size of ICMP Header: %u\n", sizeof(icmphdr));
+    if (icmphdr){
+        printf("ICMP not NULL\n");
         return;
     }
-
-    print_message("Abstracting ICMP Header");
-    struct icmp_hdr *icmp_hdr = (struct icmphdr *)(packet + sizeof(struct sr_ethernet_hdr) + ip_header_length);
-
-    print_message("Abstracting ICMP Type");
-    uint8_t icmp_type = icmp_hdr->icmp_type;
-    print_message("Abstracting ICMP Code");
-    uint8_t icmp_code = icmp_hdr->icmp_code;
-
-    // Get destination IP address (already available in ip_hdr)
-    uint32_t dest_ip = ip_hdr->ip_dst.s_addr;
-
-    // Check if the destination IP address is one of the router's interfaces
-    struct sr_if *iface = sr->if_list;
-    int is_for_router = 0;
-    while (iface) {
-        if (iface->ip == dest_ip) {
-            is_for_router = 1;
-            break;
-        }
-        iface = iface->next;
+    else{
+        printf("ICMP NULL\n");
+        return;
     }
+    // printf("ICMP Type: %u\n", icmphdr->icmp_type);
+    // printf("ICMP Code: %u\n", icmphdr->icmp_code);
 
-    if (is_for_router) {
-        // The ICMP packet is destined for the router itself
-        switch (icmp_type) {
-            case IPPORT_ECHO:
-                printf("------------ICMP ECHO it is-----------");
-                // send_icmp_echo_reply(packet, len, sr, interface, eth_hdr, ip_hdr, icmp_hdr);
-                break;
-            default:
-                // For other types, you might log or ignore
-                fprintf(stderr, "Unhandled ICMP type %d received for router\n", icmp_type);
-                break;
-        }
-    } else {
-        if (ip_hdr->ip_ttl <= 1) {
-            // TTL expired, send ICMP Time Exceeded message back to the sender
-            printf("ERROR : TTL done");
-            // send_icmp_time_exceeded(packet, len, sr, interface, eth_hdr, ip_hdr);
-            return;
-        }
+    // print_message("Abstracting ICMP Type");
+    // uint8_t icmp_type = icmphdr->icmp_type;
+    // print_message("Abstracting ICMP Code");
+    // uint8_t icmp_code = icmphdr->icmp_code;
 
-        // Decrement TTL
-        ip_hdr->ip_ttl--;
+    // // Get destination IP address (already available in ip_hdr)
+    // uint32_t dest_ip = ip_hdr->ip_dst.s_addr;
 
-        // Recalculate IP header checksum
-        ip_hdr->ip_sum = 0;
-        ip_hdr->ip_sum = get_checksum((uint16_t *)ip_hdr, ip_header_length);
+    // // Check if the destination IP address is one of the router's interfaces
+    // struct sr_if *iface = sr->if_list;
+    // int is_for_router = 0;
+    // while (iface) {
+    //     if (iface->ip == dest_ip) {
+    //         is_for_router = 1;
+    //         break;
+    //     }
+    //     iface = iface->next;
+    // }
 
-        // Forward the packet
-        // forward_packet(packet, len, sr, interface, eth_hdr, ip_hdr);
-    }
+    // if (is_for_router) {
+    //     // The ICMP packet is destined for the router itself
+    //     switch (icmp_type) {
+    //         case IPPORT_ECHO:
+    //             printf("------------ICMP ECHO it is-----------");
+    //             // send_icmp_echo_reply(packet, len, sr, interface, eth_hdr, ip_hdr, icmp_hdr);
+    //             break;
+    //         default:
+    //             // For other types, you might log or ignore
+    //             fprintf(stderr, "Unhandled ICMP type %d received for router\n", icmp_type);
+    //             break;
+    //     }
+    // } else {
+    //     if (ip_hdr->ip_ttl <= 1) {
+    //         // TTL expired, send ICMP Time Exceeded message back to the sender
+    //         printf("ERROR : TTL done");
+    //         // send_icmp_time_exceeded(packet, len, sr, interface, eth_hdr, ip_hdr);
+    //         return;
+    //     }
+
+    //     // Decrement TTL
+    //     ip_hdr->ip_ttl--;
+
+    //     // Recalculate IP header checksum
+    //     ip_hdr->ip_sum = 0;
+    //     ip_hdr->ip_sum = get_checksum((uint16_t *)ip_hdr, ip_header_length);
+
+    //     // Forward the packet
+    //     // forward_packet(packet, len, sr, interface, eth_hdr, ip_hdr);
+    // }
 }
 ///////////////////////////////////////////////////////////////////////////////////////////// Dumps
 
+
+
+void print_ip_address(uint32_t ar_sip) {
+    // Convert the IP address from network byte order to host byte order
+    uint32_t ip_host_order = ntohl(ar_sip);
+
+    // Extract each byte of the IP address
+    unsigned char bytes[4];
+    bytes[0] = (ip_host_order >> 24) & 0xFF;
+    bytes[1] = (ip_host_order >> 16) & 0xFF;
+    bytes[2] = (ip_host_order >> 8) & 0xFF;
+    bytes[3] = ip_host_order & 0xFF;
+
+    // Print the IP address in dot-decimal notation
+    printf("%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
+}
+
+void print_mac_address(const char* label, const unsigned char* mac) {
+    printf("%s: %02x:%02x:%02x:%02x:%02x:%02x\n", label, 
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+void print_ipcache_stats() {
+    pthread_mutex_lock(&CACHE_LOCK);  
+    printf("Ipcache stats begin --------------------------------------------------------- \n");
+
+    int count = 0;
+    for (int i = 0; i < MAX_IP_CACHE; i++)
+    {
+        if (IP_CACHE[i].valid == 1)
+        {              
+            count++;
+
+            uint8_t* packet = IP_CACHE[i].packet;
+            struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+
+            printf("Source IP: ");
+            print_ip_address(ip_hdr->ip_src.s_addr);
+            printf("   Destination IP: ");
+            print_ip_address(ip_hdr->ip_dst.s_addr);
+            printf("\n");
+        }
+    }
+    printf("Total valid ipcache: %d\n",count);
+    printf("Ipache stats end --------------------------------------------------------- \n");
+    pthread_mutex_unlock(&CACHE_LOCK); 
+}
+
+void print_arppcache_stats() {
+    pthread_mutex_lock(&CACHE_LOCK);  
+    printf("Arpcache stats begin --------------------------------------------------------- \n");
+
+    int count = 0;
+    for (int i = 0; i < MAX_ARP_CACHE; i++)
+    {
+        if (ARP_CACHE[i].valid == 1)
+        {              
+            count++;
+
+            printf("ARP IP: ");
+            print_ip_address(ARP_CACHE[i].ipaddr);
+            printf("   ARP MAC: ");
+            print_mac_address("", ARP_CACHE[i].ether_dhost);
+            printf("\n");
+        }
+    }
+
+    printf("Total valid arpcache: %d\n",count);
+    printf("Arpcache stats end --------------------------------------------------------- \n");
+    pthread_mutex_unlock(&CACHE_LOCK); 
+}
+
+void print_stats() {
+    print_arppcache_stats();
+    print_ipcache_stats();
+}
+
+void print_new_packet_stats(uint8_t* packet, char* interface) {
+    struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
+
+    if (ntohs(eth_hdr->ether_type) == ETHERTYPE_ARP) {
+        struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(packet + sizeof(struct sr_ethernet_hdr));
+
+        if (ntohs(arp_hdr->ar_op) == ARP_REQUEST) {
+            printf("*** New packet *** Type: ARP REQUEST IFACE: %s", interface);
+        } else {
+            printf("*** New packet *** Type: ARP REPLY IFACE: %s", interface);
+        }
+
+        printf("  Source IP: ");
+        print_ip_address(arp_hdr->ar_sip);
+        printf("  Target IP: ");
+        print_ip_address(arp_hdr->ar_tip);
+    } else {
+        struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+        printf("*** New packet *** Type: IP IFACE: %s", interface);
+        printf("  Source IP: ");
+        print_ip_address(ip_hdr->ip_src.s_addr);
+        printf("  Target IP: ");
+        print_ip_address(ip_hdr->ip_dst.s_addr);
+    }
+
+    printf("\n");
+}
 
 //     struct in_addr ip_addr;
 //     ip_addr.s_addr = ip;
@@ -629,10 +816,6 @@ void handle_icmp(uint8_t *packet,
 // }
 
 // // Function to print MAC address in human-readable format
-// void print_mac_address(const char* label, const unsigned char* mac) {
-//     printf("%s: %02x:%02x:%02x:%02x:%02x:%02x\n", label, 
-//            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-// }
 
 // // Function to print the contents of the ARP header
 // void print_arp_header(const struct sr_arphdr* arp_hdr) {
