@@ -150,4 +150,21 @@ struct sr_arphdr
 } __attribute__ ((packed)) ;
 
 
+struct icmp_hdr {
+    uint8_t  icmp_type;    /* message type */
+    uint8_t  icmp_code;    /* type sub-code */
+    uint16_t icmp_cksum;   /* checksum */
+    union {
+        struct {
+            uint16_t id;       /* identifier */
+            uint16_t sequence; /* sequence number */
+        } echo;                /* echo datagram */
+        uint32_t   gateway;    /* gateway address */
+        struct {
+            uint16_t unused;
+            uint16_t mtu;
+        } frag;                /* fragmentation info */
+    } un;
+} __attribute__((packed));
+
 #endif /* -- SR_PROTOCOL_H -- */

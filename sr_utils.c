@@ -16,6 +16,15 @@
 #define MAX_ARP_CACHE_TIME 10
 #define ENABLE_PRINT 0
 
+/////New Variables defined for No of Packets rec'd&sent//////
+int iprecd=0;
+int ipsent=0;
+int arprecd=0;
+int arpsent=0;
+int precd=0;
+int psent=0;
+int pdrop=0;
+
 //////////////////////////////////////////////////////////////////    struct and classes
 
 struct arpcache
@@ -150,15 +159,19 @@ struct ipcache *create_ipcache_entry(
 
 void cleanup_arpcache() { // must be under the lock
     time_t cur_time = time(NULL);
-
+    int ct=0;
     for (int i = 0; i < MAX_ARP_CACHE; i++) {
         if (ARP_CACHE[i].valid == 1) {
             time_t diff = cur_time - ARP_CACHE[i].cachetime;
             if (diff > MAX_ARP_CACHE_TIME) {
                 ARP_CACHE[i].valid = 0;
             }
+            else{
+                ct+=1;
+            }
         }
     }
+    // printf("---------Total Valid ARP Packets = %d -------",ct);
 }
 
 uint8_t* lookup_arpcache(u_int32_t target_ip) {
@@ -169,6 +182,7 @@ uint8_t* lookup_arpcache(u_int32_t target_ip) {
     for (int i = 0; i < MAX_ARP_CACHE; i++) {
         if (ARP_CACHE[i].valid == 1) {
             if (target_ip == ARP_CACHE[i].ipaddr) {
+                pthread_mutex_unlock(&CACHE_LOCK);
                 return ARP_CACHE[i].ether_dhost;
             }
         }
@@ -215,7 +229,6 @@ int buffer_arp_entry(struct arpcache *new_entry) {
 int buffer_ip_packet(struct ipcache *new_entry)
 {
     pthread_mutex_lock(&CACHE_LOCK);  // Lock the mutex to prevent race conditions
-
     for (int i = 0; i < MAX_IP_CACHE; i++)
     {
         if (IP_CACHE[i].valid == 0)
@@ -235,9 +248,12 @@ int buffer_ip_packet(struct ipcache *new_entry)
 void send_relevent_ipcache_entries(struct arpcache* arpcache_entry,  struct sr_instance *sr) 
 {
     pthread_mutex_lock(&CACHE_LOCK);  // Lock the mutex to prevent race conditions
-
+    int ip_packet_counter=0;
     for (int i = 0; i < MAX_IP_CACHE; i++)
     {
+        if (IP_CACHE[i].valid == 1){
+            ip_packet_counter+=1;
+        }
         if (IP_CACHE[i].valid == 1 && IP_CACHE[i].nexthop == arpcache_entry->ipaddr)
         {                            
             uint8_t* packet = IP_CACHE[i].packet;
@@ -250,6 +266,9 @@ void send_relevent_ipcache_entries(struct arpcache* arpcache_entry,  struct sr_i
             memcpy(eth_hdr->ether_shost, next_iface->addr, ETHER_ADDR_LEN);
 
             sr_send_packet(sr, packet, IP_CACHE[i].len, next_iface->name);
+            psent+=1;
+            ipsent+=1;
+            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
 
             print_message("@@@@@@@@@@@@@@@@@@ Sending IP packet successfully from cache");
 
@@ -258,6 +277,7 @@ void send_relevent_ipcache_entries(struct arpcache* arpcache_entry,  struct sr_i
     }
 
     pthread_mutex_unlock(&CACHE_LOCK); // Unlock the mutex
+    printf("---------Valid Packets == %d---------\n",ip_packet_counter);
 }
 
 void initialize_variables()
@@ -309,7 +329,7 @@ int is_valid_ip_packet(uint8_t *packet)
     int is_correct_checksum = validate_ipchecksum(packet);
     if (is_correct_checksum)
     {
-        printf("checksum is correct\n");
+        // printf("checksum is correct\n");
     }
     else
     {
@@ -417,6 +437,9 @@ void handle_arp(struct sr_instance *sr,
 
             // Send the ARP reply
             sr_send_packet(sr, packet, len, interface);
+            arpsent+=1;
+            psent+=1;
+            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
         }
     } else {
         print_message("Processing ARP Reply");
@@ -426,6 +449,7 @@ void handle_arp(struct sr_instance *sr,
         if (!success) {
             print_message("Alert!!!: ARP buffer full! Cannot put the arp entry into the buffer!");
         } else {
+            print_message("ARP added to Cache");
             send_relevent_ipcache_entries(new_arpcache, sr);
         }
     }
@@ -439,6 +463,13 @@ void handle_ip(uint8_t *packet,
 {
     struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *)packet;
     struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+    int protocol = ip_hdr->ip_p;
+    if (protocol==IPPROTO_ICMP){
+        print_message("ICMP packet rec'd");
+        // handle_icmp(*packet,len, sr, interface, eth_hdr, ip_hdr);
+        // return 1;
+    }
+
     struct sr_rt *routing_table = sr->routing_table;
 
     struct sr_rt *rt_header = routing_table;
@@ -464,7 +495,6 @@ void handle_ip(uint8_t *packet,
         }
         rt_header = rt_header->next;
     }
-
     !ENABLE_PRINT ? : print_message("handle ip 3");
 
 
@@ -479,13 +509,14 @@ void handle_ip(uint8_t *packet,
 
     }
 
-    printf("-------- found next hop for IP: %u\n", nxthop.s_addr);
+    // printf("-------- found next hop for IP: %u\n", nxthop.s_addr);
     struct sr_if* next_iface = sr_get_interface(sr, next_interface);
 
     // looking up cache
     uint8_t* target_mac = lookup_arpcache(nxthop.s_addr);
-
+    printf("-----------target MAC : %u -----------",target_mac);
     if (target_mac == NULL) {
+        printf("-----------------!!!!!Didn't find a valid ARP!!!!!----------------\n");
         // save it to buffer
         struct ipcache* new_ipcache = create_ipcache_entry(packet, len, interface, nxthop.s_addr, NULL, next_interface);
         int success = buffer_ip_packet(new_ipcache);
@@ -494,6 +525,9 @@ void handle_ip(uint8_t *packet,
             // Send ARP if buffer was successful
             uint8_t *arp_packet = create_arp(next_iface, nxthop.s_addr);
             sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), next_interface);
+            arpsent+=1;
+            psent+=1;
+            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
         } else {
             print_message("Dropping this packet: IP Buffer full");
             
@@ -503,14 +537,89 @@ void handle_ip(uint8_t *packet,
         }
     } else {
 
+        printf("Found an existing MAC from ARP Cache\n");
+
         memset(eth_hdr->ether_dhost, target_mac, ETHER_ADDR_LEN);
         memcpy(eth_hdr->ether_shost, next_iface->addr, ETHER_ADDR_LEN);
 
         sr_send_packet(sr, packet, len, next_interface);
+        ipsent+=1;
+        psent+=1;
+        printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
     }
 }
 
 
+void handle_icmp(uint8_t *packet,
+                 unsigned int len,
+                 struct sr_instance* sr,
+                 char *interface,
+                 struct sr_ethernet_hdr* eth_hdr,
+                 struct ip* ip_hdr)
+{
+    print_message("Entered Handle ICMP");
+    unsigned int ip_header_length = ip_hdr->ip_hl * 4;
+
+    print_message("Entering Length check");
+    printf("len - %d, needed - %d", len, sizeof(struct sr_ethernet_hdr) + ip_header_length + sizeof(struct icmp_hdr));
+    if (len < sizeof(struct sr_ethernet_hdr) + ip_header_length + sizeof(struct icmp_hdr)) {
+        fprintf(stderr, "Packet too short to contain ICMP header\n");
+        return;
+    }
+
+    print_message("Abstracting ICMP Header");
+    struct icmp_hdr *icmp_hdr = (struct icmphdr *)(packet + sizeof(struct sr_ethernet_hdr) + ip_header_length);
+
+    print_message("Abstracting ICMP Type");
+    uint8_t icmp_type = icmp_hdr->icmp_type;
+    print_message("Abstracting ICMP Code");
+    uint8_t icmp_code = icmp_hdr->icmp_code;
+
+    // Get destination IP address (already available in ip_hdr)
+    uint32_t dest_ip = ip_hdr->ip_dst.s_addr;
+
+    // Check if the destination IP address is one of the router's interfaces
+    struct sr_if *iface = sr->if_list;
+    int is_for_router = 0;
+    while (iface) {
+        if (iface->ip == dest_ip) {
+            is_for_router = 1;
+            break;
+        }
+        iface = iface->next;
+    }
+
+    if (is_for_router) {
+        // The ICMP packet is destined for the router itself
+        switch (icmp_type) {
+            case IPPORT_ECHO:
+                printf("------------ICMP ECHO it is-----------");
+                // send_icmp_echo_reply(packet, len, sr, interface, eth_hdr, ip_hdr, icmp_hdr);
+                break;
+            default:
+                // For other types, you might log or ignore
+                fprintf(stderr, "Unhandled ICMP type %d received for router\n", icmp_type);
+                break;
+        }
+    } else {
+        if (ip_hdr->ip_ttl <= 1) {
+            // TTL expired, send ICMP Time Exceeded message back to the sender
+            printf("ERROR : TTL done");
+            // send_icmp_time_exceeded(packet, len, sr, interface, eth_hdr, ip_hdr);
+            return;
+        }
+
+        // Decrement TTL
+        ip_hdr->ip_ttl--;
+
+        // Recalculate IP header checksum
+        ip_hdr->ip_sum = 0;
+        ip_hdr->ip_sum = get_checksum((uint16_t *)ip_hdr, ip_header_length);
+
+        // Forward the packet
+        // forward_packet(packet, len, sr, interface, eth_hdr, ip_hdr);
+    }
+}
 ///////////////////////////////////////////////////////////////////////////////////////////// Dumps
 
 

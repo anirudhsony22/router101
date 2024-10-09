@@ -70,10 +70,12 @@ void sr_handlepacket(struct sr_instance *sr,
     assert(sr);
     assert(packet);
     assert(interface);
-
-    printf("*** -> Received packet of length %d \n", len);
+    precd+=1;
+    // printf("*** -> Received packet of length %d \n", len);
+    printf("Received Packet\n");
 
     if (!is_valid_ethernet_packet(len)) {
+        pdrop+=1;
         print_drop();
         return;
     }
@@ -82,16 +84,19 @@ void sr_handlepacket(struct sr_instance *sr,
 
     switch (ntohs(eth_hdr->ether_type)) {
         case ETHERTYPE_ARP:
-
-            print_message("ARP");
+            arprecd+=1;
+            // print_message("ARP");
+            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
             handle_arp(sr, packet, len, interface);
 
             break;
         case ETHERTYPE_IP:
-
-            print_message("IP");
+            iprecd+=1;
+            // print_message("IP");
+            printf("ARP sent: %d -- ARP recd: %d -- IP Sent %d--IP Recd %d\n", arpsent, arprecd, ipsent, iprecd);
             if (!is_valid_ip_packet(packet)) // also decreasing ttl
             {
+                pdrop+=1;
                 print_drop();
                 return;
             }
@@ -102,12 +107,12 @@ void sr_handlepacket(struct sr_instance *sr,
 
             break;
         case IPPROTO_ICMP:
-
             print_message("ICMP");
 
             break;
         default:
             printf("Received an unknown packet type: 0x%04x\n", ntohs(eth_hdr->ether_type));
+            pdrop+=1;
             print_drop();
     }
     /* Add IP and ICMP handling here */
