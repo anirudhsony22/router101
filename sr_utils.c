@@ -14,6 +14,7 @@
 #define MAX_IP_CACHE 1000
 #define MAX_ARP_CACHE 100
 #define MAX_ARP_CACHE_TIME 10
+#define MAX_IP_RETRY_TIME 5
 #define ENABLE_PRINT 0
 
 /////New Variables defined for No of Packets rec'd&sent//////
@@ -808,6 +809,43 @@ void print_new_packet_stats(uint8_t* packet, char* interface) {
     }
 
     printf("\n");
+}
+
+void* ipcache_thread(void* sr_arg) {
+    struct sr_instance *sr = sr_arg;
+
+    while (1) {
+        // printf("Thread is running...\n");
+
+        pthread_mutex_lock(&CACHE_LOCK);  
+
+        for (int i = 0; i < MAX_IP_CACHE; i++)
+        {
+            if (IP_CACHE[i].valid == 1)
+            {
+                if (IP_CACHE[i].numoftimes < MAX_IP_RETRY_TIME) {
+                    struct ipcache* new_ipcache = create_ipcache_entry(IP_CACHE[i].packet, IP_CACHE[i].len
+                                    , IP_CACHE[i].in_ifacename, IP_CACHE[i].nexthop, NULL, IP_CACHE[i].out_ifacename);
+
+                    struct sr_if *next_iface = sr_get_interface(sr, IP_CACHE[i].out_ifacename);
+
+                    uint8_t *arp_packet = create_arp(next_iface, IP_CACHE[i].nexthop);
+                    sr_send_packet(sr, arp_packet, sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr), IP_CACHE[i].out_ifacename);
+                    // printf("***********################ Retrying!\n");
+                    // printf("************Try number: %d **********", IP_CACHE[i].numoftimes);
+                    IP_CACHE[i].numoftimes++;
+                } else {
+                    //todo: send icmp
+                    IP_CACHE[i].valid = 0;
+                }
+            }
+        }
+
+        pthread_mutex_unlock(&CACHE_LOCK); 
+
+        sleep(1);
+    }
+    return NULL;
 }
 
 //     struct in_addr ip_addr;

@@ -15,6 +15,8 @@
 
 #include <stdio.h>
 #include <assert.h>
+#include <pthread.h>
+#include <unistd.h>
 
 
 #include "sr_if.h"
@@ -39,7 +41,18 @@ void sr_init(struct sr_instance* sr)
     print_message("before init ************");
     initialize_variables();
     print_message("after init ************");
+
     /* Add initialization code here! */
+
+    
+    pthread_t tid;
+    int thread_status;
+
+    thread_status = pthread_create(&tid, NULL, ipcache_thread, sr);
+    if (thread_status != 0) {
+        perror("ipcache thread create failed");
+    }
+    // pthread_join(tid, NULL);
 
 } /* -- sr_init -- */
 
