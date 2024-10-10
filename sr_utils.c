@@ -530,9 +530,34 @@ void handle_ip(uint8_t *packet,
     struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
     int protocol = ip_hdr->ip_p;
     if (protocol==IPPROTO_ICMP){
-        // print_message("ICMP packet rec'd");
-        // handle_icmp(*packet,len, sr, interface, eth_hdr, ip_hdr);
-        // return 1;
+
+        struct icmp* icmphdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr) + sizeof(struct ip));
+        struct sr_if *iface = sr_get_interface(sr, interface);
+        if(ip_hdr->ip_dst.s_addr==iface->ip){
+            //todo : traverse through all ifaces
+            if(icmphdr->type==0){
+                return;
+            }
+            printf("$$$$$$$$$$$$$$$$$ ICMP Type: %u $$$$$$$$$$$$$$$$$$$$", icmphdr->type);
+            icmphdr->type = 0;
+            icmphdr->checksum = 0;
+            icmphdr->checksum = get_checksum((uint16_t *)icmphdr, sizeof(struct icmp));
+
+            ip_hdr->ip_dst = ip_hdr->ip_src;
+            ip_hdr->ip_src.s_addr = iface->ip;
+            ip_hdr->ip_ttl = 64;
+            ip_hdr->ip_sum = 0;
+            int header_len = ip_hdr->ip_hl * 4;
+            ip_hdr->ip_sum = get_checksum((uint16_t *)ip_hdr, header_len / 2);
+
+            memcpy(eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHER_ADDR_LEN);
+            memcpy(eth_hdr->ether_shost, iface->addr, ETHER_ADDR_LEN);
+            sr_send_packet(sr, packet, len, interface);
+            // arpsent+=1;
+            psent+=1;
+            return;
+        }
+
     }
 
     struct sr_rt *routing_table = sr->routing_table;

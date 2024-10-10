@@ -151,20 +151,24 @@ struct sr_arphdr
 
 
 struct icmp {
-    uint8_t  icmp_type;    /* message type */
-    uint8_t  icmp_code;    /* type sub-code */
-    uint16_t icmp_cksum;   /* checksum */
-    union {
-        struct {
-            uint16_t id;       /* identifier */
-            uint16_t sequence; /* sequence number */
-        } echo;                /* echo datagram */
-        uint32_t   gateway;    /* gateway address */
-        struct {
-            uint16_t unused;
-            uint16_t mtu;
-        } frag;                /* fragmentation info */
-    } un;
-} __attribute__((packed));
+    uint8_t type;        // Type of the ICMP message
+    uint8_t code;        // Code for the ICMP message
+    uint16_t checksum;   // Checksum for error-checking the header and data
+    uint16_t unused;
+    uint16_t next_mtu;
+    uint8_t data[28];
+    // uint16_t id;         // Identifier (used in Echo Request/Reply)
+    // uint16_t sequence;   // Sequence number (used in Echo Request/Reply)
+};
+
+// struct sr_icmp_t3_hdr {
+//   uint8_t icmp_type;
+//   uint8_t icmp_code;
+//   uint16_t icmp_sum;
+//   uint16_t unused;
+//   uint16_t next_mtu;
+//   uint8_t data[ICMP_DATA_SIZE];
+
+// } __attribute__ ((packed)) ;
 
 #endif /* -- SR_PROTOCOL_H -- */
