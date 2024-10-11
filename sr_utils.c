@@ -446,7 +446,18 @@ void handle_ip(uint8_t *packet,
 
         struct icmp* icmphdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr) + sizeof(struct ip));
         struct sr_if *iface = sr_get_interface(sr, interface);
-        if(ip_hdr->ip_dst.s_addr==iface->ip){
+
+        struct sr_if *match_iface = NULL;
+        struct sr_if* iface_header = sr->if_list;
+        while (iface_header != NULL) {
+            if(ip_hdr->ip_dst.s_addr==iface_header->ip){
+                match_iface = iface_header;
+                break;
+            }
+            iface_header = iface_header->next;
+        }
+
+        if(match_iface != NULL){
             //todo : traverse through all ifaces
             if(icmphdr->type==0){
                 return;
@@ -455,8 +466,9 @@ void handle_ip(uint8_t *packet,
             icmphdr->checksum = 0;
             icmphdr->checksum = get_checksum((uint16_t *)icmphdr, sizeof(struct icmp));
 
+            u_int32_t source_ip = ip_hdr->ip_dst.s_addr;
             ip_hdr->ip_dst = ip_hdr->ip_src;
-            ip_hdr->ip_src.s_addr = iface->ip;
+            ip_hdr->ip_src.s_addr = source_ip;
             ip_hdr->ip_ttl = 64;
             ip_hdr->ip_sum = 0;
             int header_len = ip_hdr->ip_hl * 4;
